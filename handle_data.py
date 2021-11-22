@@ -1,4 +1,4 @@
-  import numpy as np
+import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import scipy.sparse
@@ -12,6 +12,7 @@ import torch
 
 选择 从开始时间到当前时间的轨迹，画出。
 """
+"其实不需要红方的unit，蓝方的qb，改成一个文件好了"
 class Handle_data:
     def __init__(self,filename, sim_time=3000,noise_level=0):#3973.2/3888.3
         self.qb_filename = filename
@@ -78,8 +79,11 @@ class Handle_data:
         for frame in self.frames:
             if frame['sim_time']== current_time:
                 using_frame.append(frame)
-  
+                # print(frame['jb'])
+        # print("total node", len(using_frame))
         return using_frame
+
+###original version
 
 
     def compute_dtw(self,all_seq, id_x, id_y):
@@ -148,7 +152,9 @@ class Handle_data:
                 G.add_edge(v,u, weight=dist)
         adj_matrix = nx.to_numpy_matrix(G)
         adj_matrix = preprocessing.minmax_scale(adj_matrix)
+        # adj_matrix = preprocessing.normalize(adj_matrix)
         print(adj_matrix)
+
         i=0
         ###归一化边的权重
         edge_List = []
@@ -197,30 +203,40 @@ class Handle_data:
             plt.show()
 
 
-def processing_data_generating(G):
+def processing_data_generating(G,id_feature=False):
     adj = nx.to_numpy_matrix(G)
-    feature = np.zeros([G.number_of_nodes(), 2])
+    feature_id = np.zeros([G.number_of_nodes(), 2])
     labels = np.zeros(G.number_of_nodes(),dtype=int)
     idx_train = []
     idx_test = []
     i=0
     for v in G.nodes:
-        feature[i] = np.array([G.nodes[v]['hx'], G.nodes[v]['sp']])
+        feature_id[i] = np.array([G.nodes[v]['hx'], G.nodes[v]['sp']])
         if G.nodes[v]['label'] == 0:
             idx_test.append(i)
         else:
             idx_train.append(i)
         labels[i] = G.nodes[v]['real']
         i += 1
-    features = preprocess_features(feature)
-    i = torch.from_numpy(features[0].astype(np.int64)).long()
-    v = torch.from_numpy(features[1])
-    feature = torch.sparse.FloatTensor(i.t(), v, features[2]).to_dense().to(torch.float32)
-    return adj, feature,labels,np.array(idx_train),np.array(idx_test)
+
+        # feature = np.ones([G.number_of_nodes(),2])
+    feature = np.identity(G.number_of_nodes())
+        # feature = np.hstack([feature2,feature])
+
+    def trans_feat(feature):
+        features = preprocess_features(feature)
+        i = torch.from_numpy(features[0].astype(np.int64)).long()
+        v = torch.from_numpy(features[1])
+        feature = torch.sparse.FloatTensor(i.t(), v, features[2]).to_dense().to(torch.float32)
+        return feature
+    feature = trans_feat(feature)
+    feature_id = trans_feat(feature_id)
+    return adj, feature,labels,np.array(idx_train),np.array(idx_test),feature_id
 
 
 def data_for_mygat_training(G):
-    adj, features, labels, idx_train, idx_test = processing_data_generating(G)
+    adj, features, labels, idx_train, idx_test,feature_id = processing_data_generating(G)
+    "label 感觉有点问题"
     k = len(labels)
     adj = scipy.sparse.csr_matrix(adj)
     train_mask = np.zeros(k, dtype=bool)
@@ -228,38 +244,17 @@ def data_for_mygat_training(G):
     test_mask = np.zeros(k, dtype=bool)
     test_mask[idx_test] = True
     labels = labels-1 ###要求label是[0,1]这样从0开始计数的
-    return adj, features, labels, train_mask, test_mask
+    return adj, features, labels, train_mask, test_mask,feature_id
 
 
-def data_for_gcn_training(G):
-    """
-    y_train和y_test 用来训练gcn的
-    :param G:
-    :return:
-    """
-    adj, features,labels,idx_train,idx_test = processing_data_generating(G)
-    k = len(labels)
-    l = max(labels)
-    adj = scipy.sparse.csr_matrix(adj)
-    train_mask = np.zeros(k, dtype=bool)
-    train_mask[idx_train] = True
-    test_mask = np.zeros(k, dtype=bool)
-    test_mask[idx_test] = True
-    labels = labels-1
-    y_test = np.eye(k,l)[labels]
-    y_test[idx_train, :] = 0
-    y_train = np.eye(k,l)[labels]
-    y_train[idx_test, :] = 0
-    return adj, features, y_train, y_test, train_mask, test_mask
-
-def data_for_rogcn_training(G):
+def data_for_gcn_training(G,id_feature=False):
     """
     y_train和y_test 用来训练gcn的
     这里的label有问题
     :param G:
     :return:
     """
-    adj, features,labels,idx_train,idx_test = processing_data_generating(G)
+    adj, features,labels,idx_train,idx_test,feature_id = processing_data_generating(G,id_feature)
     k = len(labels)
     l = max(labels)
     adj = scipy.sparse.csr_matrix(adj)
@@ -272,7 +267,29 @@ def data_for_rogcn_training(G):
     y_test[idx_train, :] = 0
     y_train = np.eye(k,l)[labels]
     y_train[idx_test, :] = 0
-    return adj, features,labels,idx_train,idx_test
+    return adj, feature_id, y_train, y_test, train_mask, test_mask
+
+def data_for_rogcn_training(G,id_feature = False):
+    """
+    y_train和y_test 用来训练gcn的
+    这里的label有问题
+    :param G:
+    :return:
+    """
+    adj, features,labels,idx_train,idx_test,feature_id = processing_data_generating(G,id_feature=id_feature)
+    k = len(labels)
+    l = max(labels)
+    adj = scipy.sparse.csr_matrix(adj)
+    train_mask = np.zeros(k, dtype=bool)
+    train_mask[idx_train] = True
+    test_mask = np.zeros(k, dtype=bool)
+    test_mask[idx_test] = True
+    labels = labels-1
+    y_test = np.eye(k,l)[labels]
+    y_test[idx_train, :] = 0
+    y_train = np.eye(k,l)[labels]
+    y_train[idx_test, :] = 0
+    return adj, features,labels,idx_train,idx_test,feature_id
 
 
 class Red_handle(Handle_data):
@@ -312,8 +329,31 @@ class Handle_test_label(Handle_data):
         return G
 
 
-# 
 
+def test1():
+    qb_information = r"logdata2/logdata/blue_qb_202011242031.txt"
+    unitsqb_information = "logdata2/logdata/red_units_202011242031.txt"
+
+    handle = Handle_data(qb_information)
+    G = handle.generate_G()
+    handle.draw(G)
+    current_type = handle.current_type
+    Red = Handle_test_label(unitsqb_information)
+    G = Red.obtain_test_label(G,current_type=current_type)
+    # print(len(G.nodes))
+    # for v in G.nodes:
+    #     print("v:",v, " .The real:",G.nodes[v]['real'])
+
+    #
+    # adj, feature, labels,idx_train,idx_test = generate_gat_data(G)
+    #
+    # Red = Red_handle(redqb_information,unitsqb_information)
+    #
+    # Red.get_test_label(G)
+    # print(adj)
+    # print(feature)
+    # print(idx_train)
+    # print(idx_test)
 
 
 if __name__ == "__main__":
@@ -321,9 +361,10 @@ if __name__ == "__main__":
     # units_infomation = "C:/Users/zhouxianchen/Desktop/zxc/logdata/blue_units_202009031945.txt"
     # redqb_information = "C:/Users/zhouxianchen/Desktop/zxc/logdata/red_qb_202009031945.txt"
     # unitsqb_information = "C:/Users/zhouxianchen/Desktop/zxc/logdata/red_qb_202009031945.txt"
-    #
+    # #
     # handle = Handle_data(qb_information, units_infomation)
-    # seq = handle.get_all_squence()
+    # # seq = handle.get_all_squence()
     # G = handle.generate_dtw_G()
     # handle.draw(G)
+    test1()
     # Handle_test_label

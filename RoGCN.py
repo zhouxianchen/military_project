@@ -26,7 +26,7 @@ class ProGCN:
         self.estimator = None
         self.model = model.to(device)
 
-    def fit(self, features, adj, labels, idx_train, idx_val):
+    def fit(self, features, adj, labels, idx_train, idx_val,feature_id):
         args = self.args
         self.optimizer = optim.Adam(self.model.parameters(),
                                lr=args.lr, weight_decay=args.weight_decay)
@@ -44,16 +44,16 @@ class ProGCN:
             if args.only_gcn:
                 for i in range(int(args.inner_steps)):
                     self.train_gcn(epoch, features, estimator.estimated_adj,
-                            labels, idx_train, idx_val)
+                            labels, idx_train, idx_val,feature_id)
 
             else:
                 for i in range(int(args.outer_steps)):
                     self.train_adj(epoch, features, adj, labels,
-                            idx_train, idx_val)
+                            idx_train, idx_val,feature_id)
 
                 for i in range(int(args.inner_steps)):
                     self.train_gcn(epoch, features, estimator.estimated_adj,
-                            labels, idx_train, idx_val)
+                            labels, idx_train, idx_val,feature_id)
 
         print("Optimization Finished!")
         print("Total time elapsed: {:.4f}s".format(time.time() - t_total))
@@ -63,7 +63,7 @@ class ProGCN:
         print("picking the best model according to validation performance")
         self.model.load_state_dict(self.weights)
 
-    def train_gcn(self, epoch, features, adj, labels, idx_train, idx_val):
+    def train_gcn(self, epoch, features, adj, labels, idx_train, idx_val,feature_id):
         args = self.args
         estimator = self.estimator
         adj = estimator.normalize()
@@ -101,7 +101,7 @@ class ProGCN:
                 print(f'\t=== saving current graph/gcn, best_val_loss: %s' % self.best_val_loss.item())
 
         if args.debug:
-            if epoch % 1 == 0:
+            if epoch % 100 == 0:
                 print('Epoch: {:04d}'.format(epoch+1),
                       'loss_train: {:.4f}'.format(loss_train.item()),
                       'acc_train: {:.4f}'.format(acc_train.item()),
@@ -111,7 +111,7 @@ class ProGCN:
 
 
 
-    def train_adj(self, epoch, features, adj, labels, idx_train, idx_val):
+    def train_adj(self, epoch, features, adj, labels, idx_train, idx_val, feature_id):
         estimator = self.estimator
         args = self.args
         if args.debug:
@@ -125,7 +125,7 @@ class ProGCN:
         normalized_adj = estimator.normalize()
 
         if args.lambda_:
-            loss_smooth_feat = self.feature_smoothing(estimator.estimated_adj, features)
+            loss_smooth_feat = self.feature_smoothing(estimator.estimated_adj, feature_id)
         else:
             loss_smooth_feat = 0 * loss_l1
 
